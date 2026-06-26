@@ -13,35 +13,44 @@
     font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
     overflow: hidden;
   }
-  #wrap {
-    position: absolute;
-    inset: 0;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-  }
-  canvas {
-    background: #11161f;
-    box-shadow: 0 0 0 1px #30363d, 0 10px 40px rgba(0,0,0,0.5);
-    cursor: none;
-  }
-  #overlay {
+  /* Each "screen" fills the window; we show exactly one at a time. */
+  .screen {
     position: absolute;
     inset: 0;
     display: flex;
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    background: rgba(8, 11, 16, 0.82);
-    text-align: center;
-    gap: 10px;
-    z-index: 10;
   }
-  #overlay h1 { margin: 0; font-size: 22px; color: #e6edf3; }
-  #overlay p { margin: 2px; font-size: 13px; line-height: 1.6; color: #8b949e; }
-  #overlay .key { color: #58a6ff; }
-  #overlay.hidden { display: none; }
-  #overlay { pointer-events: none; } /* never intercept the start click */
+  .screen.hidden { display: none; }
+
+  /* ---- Start screen ---- */
+  #startScreen { gap: 14px; text-align: center; }
+  #startScreen h1 { margin: 0; font-size: 26px; color: #e6edf3; }
+  #startScreen p { margin: 2px; font-size: 13px; line-height: 1.6; color: #8b949e; }
+  #startScreen .key { color: #58a6ff; }
+  #startBtn {
+    margin-top: 16px;
+    padding: 14px 34px;
+    font: inherit;
+    font-size: 16px;
+    font-weight: 600;
+    color: #0d1117;
+    background: #58a6ff;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: background 0.15s, transform 0.05s;
+  }
+  #startBtn:hover { background: #79b8ff; }
+  #startBtn:active { transform: translateY(1px); }
+
+  /* ---- Game screen ---- */
+  #gameScreen canvas {
+    background: #11161f;
+    box-shadow: 0 0 0 1px #30363d, 0 10px 40px rgba(0,0,0,0.5);
+    cursor: crosshair;
+  }
   #hud {
     position: absolute;
     top: 10px;
@@ -50,23 +59,35 @@
     line-height: 1.5;
     color: #8b949e;
     pointer-events: none;
-    z-index: 5;
     white-space: pre;
+  }
+  #hint {
+    position: absolute;
+    bottom: 12px;
+    left: 0;
+    right: 0;
+    text-align: center;
+    font-size: 12px;
+    color: #6e7681;
+    pointer-events: none;
   }
 </style>
 </head>
 <body>
-<div id="wrap">
-  <canvas id="game" width="960" height="640"></canvas>
-  <div id="hud"></div>
-  <div id="overlay">
+  <!-- START SCREEN -->
+  <div id="startScreen" class="screen">
     <h1>Spin-Throw Arena</h1>
-    <p><span class="key">Click</span> to start (locks the mouse for spinning)</p>
     <p><span class="key">WASD</span> move &nbsp;•&nbsp; <span class="key">move mouse left/right</span> to spin</p>
     <p><span class="key">Hold left-click</span> + touch the ball to catch &nbsp;•&nbsp; <span class="key">release</span> to throw</p>
-    <p style="margin-top:8px;font-size:11px">Esc releases the mouse · click again to resume</p>
+    <button id="startBtn" type="button">Start Game</button>
   </div>
-</div>
+
+  <!-- GAME SCREEN -->
+  <div id="gameScreen" class="screen hidden">
+    <canvas id="game" width="960" height="640"></canvas>
+    <div id="hud"></div>
+    <p id="hint">Hold left-click on the ball to catch · move mouse left/right to spin up · release to throw · Esc frees the mouse</p>
+  </div>
 
 <script>
 // =============================================================
@@ -102,10 +123,12 @@ const CFG = {
 };
 // =============================================================
 
+const startScreen = document.getElementById("startScreen");
+const gameScreen = document.getElementById("gameScreen");
+const startBtn = document.getElementById("startBtn");
 const canvas = document.getElementById("game");
 const ctx = canvas.getContext("2d");
 const hud = document.getElementById("hud");
-const overlay = document.getElementById("overlay");
 
 const W = canvas.width;
 const H = canvas.height;
@@ -142,8 +165,23 @@ const ball = {
 const keys = { w: false, a: false, s: false, d: false };
 let lmbDown = false;
 let mouseDXThisFrame = 0;   // accumulated horizontal mouse motion since last frame
-let pointerLocked = false;
-let started = false;        // game runs once the user has clicked to start
+let started = false;        // true once Start Game is pressed
+
+// ---- Start / screen management ----
+function startGame() {
+  if (started) return;
+  started = true;
+  startScreen.classList.add("hidden");
+  gameScreen.classList.remove("hidden");
+  last = performance.now();   // reset clock so we don't get one huge dt on the first frame
+  // Pointer lock is a nice-to-have (lets you spin without the cursor hitting a screen
+  // edge). Request it, but never depend on it — it's blocked in some embedded contexts.
+  if (canvas.requestPointerLock) {
+    const p = canvas.requestPointerLock();
+    if (p && p.catch) p.catch(() => {});
+  }
+}
+startBtn.addEventListener("click", startGame);
 
 // ---- Input wiring ----
 window.addEventListener("keydown", (e) => {
@@ -155,36 +193,25 @@ window.addEventListener("keyup", (e) => {
   if (k in keys) { keys[k] = false; e.preventDefault(); }
 });
 
-// Listen on window, not the canvas: the start overlay (and pointer-lock quirks)
-// can sit between the cursor and the canvas, so a window-level listener is the
-// reliable place to catch the click.
+// Left mouse = catch/throw. Only meaningful once the game has started, so the
+// click on the Start button can never be mistaken for a catch.
 window.addEventListener("mousedown", (e) => {
-  if (e.button === 0) {
-    // Start on first click. Pointer lock is a nice-to-have (continuous spin without
-    // the cursor hitting a screen edge) but NOT required — it's blocked in some
-    // embedded/iframe contexts, so we never gate gameplay on it.
-    if (!started) {
-      started = true;
-      overlay.classList.add("hidden");
-    }
-    if (!pointerLocked && canvas.requestPointerLock) {
-      const p = canvas.requestPointerLock();
-      if (p && p.catch) p.catch(() => {}); // ignore if the environment denies it
-    }
-    lmbDown = true;
-  }
+  if (started && e.button === 0) lmbDown = true;
 });
 window.addEventListener("mouseup", (e) => {
   if (e.button === 0) lmbDown = false;
 });
 
-document.addEventListener("pointerlockchange", () => {
-  pointerLocked = (document.pointerLockElement === canvas);
+// Re-acquire pointer lock if the user clicks back into the game after Esc.
+canvas.addEventListener("mousedown", (e) => {
+  if (started && e.button === 0 && document.pointerLockElement !== canvas && canvas.requestPointerLock) {
+    const p = canvas.requestPointerLock();
+    if (p && p.catch) p.catch(() => {});
+  }
 });
 
-document.addEventListener("mousemove", (e) => {
-  // movementX is available with or without pointer lock; only horizontal motion
-  // matters for spin, vertical is ignored entirely.
+// Spin: only horizontal motion matters; movementX works with or without pointer lock.
+window.addEventListener("mousemove", (e) => {
   if (started) mouseDXThisFrame += e.movementX;
 });
 
@@ -359,8 +386,10 @@ function frame(now) {
   let dt = (now - last) / 1000;
   last = now;
   if (dt > 0.033) dt = 0.033; // clamp big hitches (e.g. tab switch) for stable physics
-  if (started) update(dt);
-  draw();
+  if (started) {
+    update(dt);
+    draw();
+  }
   requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);
