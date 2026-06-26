@@ -87,7 +87,7 @@
   <div id="gameScreen" class="screen hidden">
     <canvas id="game" width="960" height="640"></canvas>
     <div id="hud"></div>
-    <p id="hint">Hold left-click to catch · move mouse left/right to spin up · release to throw · Space = set straight up · Esc frees the mouse</p>
+    <p id="hint">Hold left-click to catch · move mouse left/right to spin up · release to throw · Space = set straight up · Esc frees the cursor (click to re-lock)</p>
   </div>
 
 <script>
@@ -168,6 +168,7 @@ const keys = { w: false, a: false, s: false, d: false };
 let lmbDown = false;
 let mouseDXThisFrame = 0;   // accumulated horizontal mouse motion since last frame
 let started = false;        // true once Start Game is pressed
+let pointerLocked = false;  // is the cursor pinned? (lets you spin past the screen edge)
 
 // ---- Start / screen management ----
 function startGame() {
@@ -176,14 +177,23 @@ function startGame() {
   startScreen.classList.add("hidden");
   gameScreen.classList.remove("hidden");
   last = performance.now();   // reset clock so we don't get one huge dt on the first frame
-  // Pointer lock is a nice-to-have (lets you spin without the cursor hitting a screen
-  // edge). Request it, but never depend on it — it's blocked in some embedded contexts.
-  if (canvas.requestPointerLock) {
-    const p = canvas.requestPointerLock();
-    if (p && p.catch) p.catch(() => {});
-  }
+  lockMouse();                // pin the cursor so spinning isn't limited by the screen edge
 }
 startBtn.addEventListener("click", startGame);
+
+// Pointer lock pins the cursor in place while still streaming mouse motion via movementX,
+// so you can drag one direction forever without the OS cursor hitting a screen edge and
+// stalling the spin. It requires a user gesture and is blocked in some embedded iframes,
+// so we (re-)request it on any in-game click and never let a failure break the game.
+function lockMouse() {
+  if (document.pointerLockElement === canvas || !canvas.requestPointerLock) return;
+  const p = canvas.requestPointerLock();
+  if (p && p.catch) p.catch(() => {}); // ignore if the environment denies it
+}
+document.addEventListener("pointerlockchange", () => {
+  pointerLocked = (document.pointerLockElement === canvas);
+});
+document.addEventListener("pointerlockerror", () => { pointerLocked = false; });
 
 // ---- Input wiring ----
 window.addEventListener("keydown", (e) => {
@@ -204,18 +214,13 @@ window.addEventListener("keyup", (e) => {
 // Left mouse = catch/throw. Only meaningful once the game has started, so the
 // click on the Start button can never be mistaken for a catch.
 window.addEventListener("mousedown", (e) => {
-  if (started && e.button === 0) lmbDown = true;
+  if (started && e.button === 0) {
+    lmbDown = true;
+    lockMouse(); // re-pin the cursor if it was freed (e.g. after Esc)
+  }
 });
 window.addEventListener("mouseup", (e) => {
   if (e.button === 0) lmbDown = false;
-});
-
-// Re-acquire pointer lock if the user clicks back into the game after Esc.
-canvas.addEventListener("mousedown", (e) => {
-  if (started && e.button === 0 && document.pointerLockElement !== canvas && canvas.requestPointerLock) {
-    const p = canvas.requestPointerLock();
-    if (p && p.catch) p.catch(() => {});
-  }
 });
 
 // Spin: only horizontal motion matters; movementX works with or without pointer lock.
@@ -398,7 +403,8 @@ function draw() {
     `spin (omega):   ${player.omega.toFixed(2)} rad/s\n` +
     `ball state:     ${ball.held ? "HELD" : "free"}\n` +
     `ball speed:     ${ballSpeed.toFixed(0)} px/s\n` +
-    `throw if release now: ${projThrow.toFixed(0)} px/s`;
+    `throw if release now: ${projThrow.toFixed(0)} px/s\n` +
+    `mouse:          ${pointerLocked ? "LOCKED (drag freely)" : "free — click to lock"}`;
 }
 
 // ---- Main loop ----
