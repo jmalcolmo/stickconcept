@@ -142,6 +142,7 @@ const keys = { w: false, a: false, s: false, d: false };
 let lmbDown = false;
 let mouseDXThisFrame = 0;   // accumulated horizontal mouse motion since last frame
 let pointerLocked = false;
+let started = false;        // game runs once the user has clicked to start
 
 // ---- Input wiring ----
 window.addEventListener("keydown", (e) => {
@@ -155,8 +156,16 @@ window.addEventListener("keyup", (e) => {
 
 canvas.addEventListener("mousedown", (e) => {
   if (e.button === 0) {
-    if (!pointerLocked) {
-      canvas.requestPointerLock();
+    // Start on first click. Pointer lock is a nice-to-have (continuous spin without
+    // the cursor hitting a screen edge) but NOT required — it's blocked in some
+    // embedded/iframe contexts, so we never gate gameplay on it.
+    if (!started) {
+      started = true;
+      overlay.classList.add("hidden");
+    }
+    if (!pointerLocked && canvas.requestPointerLock) {
+      const p = canvas.requestPointerLock();
+      if (p && p.catch) p.catch(() => {}); // ignore if the environment denies it
     }
     lmbDown = true;
   }
@@ -167,15 +176,12 @@ window.addEventListener("mouseup", (e) => {
 
 document.addEventListener("pointerlockchange", () => {
   pointerLocked = (document.pointerLockElement === canvas);
-  overlay.classList.toggle("hidden", pointerLocked);
-  if (!pointerLocked) lmbDown = false; // safety: dropping lock cancels hold
 });
 
 document.addEventListener("mousemove", (e) => {
-  if (pointerLocked) {
-    // Only horizontal motion matters; vertical is ignored entirely.
-    mouseDXThisFrame += e.movementX;
-  }
+  // movementX is available with or without pointer lock; only horizontal motion
+  // matters for spin, vertical is ignored entirely.
+  if (started) mouseDXThisFrame += e.movementX;
 });
 
 // ---- Helpers ----
@@ -349,7 +355,7 @@ function frame(now) {
   let dt = (now - last) / 1000;
   last = now;
   if (dt > 0.033) dt = 0.033; // clamp big hitches (e.g. tab switch) for stable physics
-  if (pointerLocked) update(dt);
+  if (started) update(dt);
   draw();
   requestAnimationFrame(frame);
 }
