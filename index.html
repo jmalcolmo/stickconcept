@@ -41,6 +41,7 @@
   #overlay p { margin: 2px; font-size: 13px; line-height: 1.6; color: #8b949e; }
   #overlay .key { color: #58a6ff; }
   #overlay.hidden { display: none; }
+  #overlay { pointer-events: none; } /* never intercept the start click */
   #hud {
     position: absolute;
     top: 10px;
@@ -154,7 +155,10 @@ window.addEventListener("keyup", (e) => {
   if (k in keys) { keys[k] = false; e.preventDefault(); }
 });
 
-canvas.addEventListener("mousedown", (e) => {
+// Listen on window, not the canvas: the start overlay (and pointer-lock quirks)
+// can sit between the cursor and the canvas, so a window-level listener is the
+// reliable place to catch the click.
+window.addEventListener("mousedown", (e) => {
   if (e.button === 0) {
     // Start on first click. Pointer lock is a nice-to-have (continuous spin without
     // the cursor hitting a screen edge) but NOT required — it's blocked in some
