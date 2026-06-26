@@ -1,0 +1,425 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Spin-Throw Arena — Prototype</title>
+<style>
+  html, body {
+    margin: 0;
+    height: 100%;
+    background: #0e1117;
+    color: #c9d1d9;
+    font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+    overflow: hidden;
+  }
+  /* Each "screen" fills the window; we show exactly one at a time. */
+  .screen {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+  }
+  .screen.hidden { display: none; }
+
+  /* ---- Start screen ---- */
+  #startScreen { gap: 14px; text-align: center; }
+  #startScreen h1 { margin: 0; font-size: 26px; color: #e6edf3; }
+  #startScreen p { margin: 2px; font-size: 13px; line-height: 1.6; color: #8b949e; }
+  #startScreen .key { color: #58a6ff; }
+  #startBtn {
+    margin-top: 16px;
+    padding: 14px 34px;
+    font: inherit;
+    font-size: 16px;
+    font-weight: 600;
+    color: #0d1117;
+    background: #58a6ff;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: background 0.15s, transform 0.05s;
+  }
+  #startBtn:hover { background: #79b8ff; }
+  #startBtn:active { transform: translateY(1px); }
+
+  /* ---- Game screen ---- */
+  #gameScreen canvas {
+    background: #11161f;
+    box-shadow: 0 0 0 1px #30363d, 0 10px 40px rgba(0,0,0,0.5);
+    cursor: crosshair;
+  }
+  #hud {
+    position: absolute;
+    top: 10px;
+    left: 12px;
+    font-size: 12px;
+    line-height: 1.5;
+    color: #8b949e;
+    pointer-events: none;
+    white-space: pre;
+  }
+  #hint {
+    position: absolute;
+    bottom: 12px;
+    left: 0;
+    right: 0;
+    text-align: center;
+    font-size: 12px;
+    color: #6e7681;
+    pointer-events: none;
+  }
+</style>
+</head>
+<body>
+  <!-- START SCREEN -->
+  <div id="startScreen" class="screen">
+    <h1>Spin-Throw Arena</h1>
+    <p><span class="key">WASD</span> move &nbsp;•&nbsp; <span class="key">move mouse left/right</span> to spin</p>
+    <p><span class="key">Hold left-click</span> + touch the ball to catch &nbsp;•&nbsp; <span class="key">release</span> to throw</p>
+    <p><span class="key">Space</span> set the held ball straight up (release with no spin = launch outward)</p>
+    <button id="startBtn" type="button">Start Game</button>
+  </div>
+
+  <!-- GAME SCREEN -->
+  <div id="gameScreen" class="screen hidden">
+    <canvas id="game" width="960" height="640"></canvas>
+    <div id="hud"></div>
+    <p id="hint">Hold left-click to catch · move mouse left/right to spin up · release to throw · Space = set straight up · Esc frees the cursor (click to re-lock)</p>
+  </div>
+
+<script>
+// =============================================================
+//  TUNING — tweak these to change game feel
+// =============================================================
+const CFG = {
+  // Player movement (independent of rotation)
+  PLAYER_RADIUS: 26,
+  PLAYER_SPEED: 260,          // px/sec, WASD movement speed
+
+  // Spin / rotation (driven DIRECTLY by horizontal mouse motion — 1:1, no inertia)
+  ROTATION_SENSITIVITY: 0.01,  // radians the player rotates per pixel of horizontal mouse motion
+  MAX_ANGULAR_VELOCITY: 22,    // rad/sec hard cap on spin speed (clamps a violent swipe -> caps throw power)
+
+  // Ball
+  BALL_RADIUS: 12,
+  BALL_FRICTION: 0.997,        // per-frame (60fps) linear damping on a free ball (1 = frictionless)
+
+  // Orbit while held: ball sits on player's edge. Radius = sum of radii * this factor.
+  ORBIT_RADIUS_FACTOR: 1.0,    // 1.0 = ball touches the player's edge exactly
+
+  // Collisions / bounce
+  WALL_RESTITUTION: 0.9,       // how bouncy arena walls are (1 = perfectly elastic)
+  PLAYER_RESTITUTION: 0.85,    // how bouncy the player is when the ball hits them (not holding)
+
+  // Throw
+  ADD_PLAYER_VELOCITY_ON_THROW: true, // also impart the player's running velocity to the thrown ball
+  RELEASE_NUDGE: 2,            // px the ball is pushed outward on release so it doesn't instantly re-collide
+  SET_RELEASE_OMEGA_THRESHOLD: 0.5,   // below this spin (rad/s), a release is a "set": fired straight out
+  SET_RELEASE_SPEED_FACTOR: 0.5,      // a no-spin ("set") release launches at this fraction of max throw speed
+
+  // Arena
+  WALL_THICKNESS: 16,
+};
+// =============================================================
+
+const startScreen = document.getElementById("startScreen");
+const gameScreen = document.getElementById("gameScreen");
+const startBtn = document.getElementById("startBtn");
+const canvas = document.getElementById("game");
+const ctx = canvas.getContext("2d");
+const hud = document.getElementById("hud");
+
+const W = canvas.width;
+const H = canvas.height;
+
+// Arena inner bounds (where the ball is allowed to be — accounting for wall thickness)
+const arena = {
+  left: CFG.WALL_THICKNESS,
+  top: CFG.WALL_THICKNESS,
+  right: W - CFG.WALL_THICKNESS,
+  bottom: H - CFG.WALL_THICKNESS,
+};
+
+const player = {
+  x: W * 0.35,
+  y: H * 0.5,
+  vx: 0,            // current linear velocity (derived from WASD), used for throw + bounce feel
+  vy: 0,
+  angle: 0,         // facing/orientation in radians
+  omega: 0,         // angular velocity (rad/sec) — THIS drives throw power
+};
+
+const ball = {
+  x: W * 0.65,
+  y: H * 0.5,
+  vx: 0,
+  vy: 0,
+  held: false,
+  // angular offset of the ball relative to player.angle, captured at the moment of catch
+  // (so the ball grabs onto wherever it touched, then orbits with the player)
+  attachOffset: 0,
+};
+
+// Input state
+const keys = { w: false, a: false, s: false, d: false };
+let lmbDown = false;
+let mouseDXThisFrame = 0;   // accumulated horizontal mouse motion since last frame
+let started = false;        // true once Start Game is pressed
+let pointerLocked = false;  // is the cursor pinned? (lets you spin past the screen edge)
+
+// ---- Start / screen management ----
+function startGame() {
+  if (started) return;
+  started = true;
+  startScreen.classList.add("hidden");
+  gameScreen.classList.remove("hidden");
+  last = performance.now();   // reset clock so we don't get one huge dt on the first frame
+  lockMouse();                // pin the cursor so spinning isn't limited by the screen edge
+}
+startBtn.addEventListener("click", startGame);
+
+// Pointer lock pins the cursor in place while still streaming mouse motion via movementX,
+// so you can drag one direction forever without the OS cursor hitting a screen edge and
+// stalling the spin. It requires a user gesture and is blocked in some embedded iframes,
+// so we (re-)request it on any in-game click and never let a failure break the game.
+function lockMouse() {
+  if (document.pointerLockElement === canvas || !canvas.requestPointerLock) return;
+  const p = canvas.requestPointerLock();
+  if (p && p.catch) p.catch(() => {}); // ignore if the environment denies it
+}
+document.addEventListener("pointerlockchange", () => {
+  pointerLocked = (document.pointerLockElement === canvas);
+});
+document.addEventListener("pointerlockerror", () => { pointerLocked = false; });
+
+// ---- Input wiring ----
+window.addEventListener("keydown", (e) => {
+  const k = e.key.toLowerCase();
+  if (k in keys) { keys[k] = true; e.preventDefault(); }
+  // SET: while holding the ball, snap it directly north (straight up) of the player,
+  // instantly — just re-anchor its orbit offset so this frame's angle points up.
+  if (e.code === "Space" && started) {
+    if (ball.held) ball.attachOffset = -Math.PI / 2 - player.angle;
+    e.preventDefault(); // don't let space scroll the page
+  }
+});
+window.addEventListener("keyup", (e) => {
+  const k = e.key.toLowerCase();
+  if (k in keys) { keys[k] = false; e.preventDefault(); }
+});
+
+// Left mouse = catch/throw. Only meaningful once the game has started, so the
+// click on the Start button can never be mistaken for a catch.
+window.addEventListener("mousedown", (e) => {
+  if (started && e.button === 0) {
+    lmbDown = true;
+    lockMouse(); // re-pin the cursor if it was freed (e.g. after Esc)
+  }
+});
+window.addEventListener("mouseup", (e) => {
+  if (e.button === 0) lmbDown = false;
+});
+
+// Spin: only horizontal motion matters; movementX works with or without pointer lock.
+window.addEventListener("mousemove", (e) => {
+  if (started) mouseDXThisFrame += e.movementX;
+});
+
+// ---- Helpers ----
+function clamp(v, lo, hi) { return v < lo ? lo : (v > hi ? hi : v); }
+// Convert a per-60fps-frame multiplier into a dt-correct factor
+function damp(perFrame, dt) { return Math.pow(perFrame, dt * 60); }
+
+// ---- Simulation ----
+function update(dt) {
+  // --- Player linear movement (fully independent of rotation) ---
+  let mx = (keys.d ? 1 : 0) - (keys.a ? 1 : 0);
+  let my = (keys.s ? 1 : 0) - (keys.w ? 1 : 0);
+  if (mx !== 0 || my !== 0) {
+    const len = Math.hypot(mx, my);
+    mx /= len; my /= len;
+  }
+  player.vx = mx * CFG.PLAYER_SPEED;
+  player.vy = my * CFG.PLAYER_SPEED;
+  player.x += player.vx * dt;
+  player.y += player.vy * dt;
+  // Keep player inside the arena
+  player.x = clamp(player.x, arena.left + CFG.PLAYER_RADIUS, arena.right - CFG.PLAYER_RADIUS);
+  player.y = clamp(player.y, arena.top + CFG.PLAYER_RADIUS, arena.bottom - CFG.PLAYER_RADIUS);
+
+  // --- Spin: rotation is driven DIRECTLY by horizontal mouse motion, no inertia.
+  // Stop the mouse and the spin stops instantly. omega is the real angular velocity
+  // for THIS frame, derived from how far the mouse moved — that's what the throw uses. ---
+  let deltaAngle = mouseDXThisFrame * CFG.ROTATION_SENSITIVITY;
+  mouseDXThisFrame = 0;
+  // Cap a single frame's rotation so an extremely fast swipe can't exceed the max spin speed.
+  const maxDelta = CFG.MAX_ANGULAR_VELOCITY * dt;
+  deltaAngle = clamp(deltaAngle, -maxDelta, maxDelta);
+  player.angle += deltaAngle;
+  player.omega = dt > 0 ? deltaAngle / dt : 0;
+
+  const orbitR = (CFG.PLAYER_RADIUS + CFG.BALL_RADIUS) * CFG.ORBIT_RADIUS_FACTOR;
+
+  if (ball.held) {
+    // Ball is locked to the player's circumference at its captured angular offset.
+    const theta = player.angle + ball.attachOffset;
+    ball.x = player.x + Math.cos(theta) * orbitR;
+    ball.y = player.y + Math.sin(theta) * orbitR;
+
+    if (!lmbDown) {
+      const nx = Math.cos(theta), ny = Math.sin(theta); // radial (outward-from-center) direction
+      const maxThrowSpeed = CFG.MAX_ANGULAR_VELOCITY * orbitR;
+      if (Math.abs(player.omega) < CFG.SET_RELEASE_OMEGA_THRESHOLD) {
+        // SET RELEASE: no meaningful spin, so there's no tangential velocity to throw with.
+        // Launch the ball straight outward from the player's center (e.g. straight up after
+        // a "set") at a fixed fraction of the max throw speed.
+        const setSpeed = maxThrowSpeed * CFG.SET_RELEASE_SPEED_FACTOR;
+        ball.vx = nx * setSpeed;
+        ball.vy = ny * setSpeed;
+      } else {
+        // THROW: launch with the ball's REAL tangential velocity at this instant. A point
+        // orbiting at angle theta with angular velocity omega has tangential velocity
+        // omega * R in the tangent direction (-sin, cos).
+        ball.vx = -Math.sin(theta) * player.omega * orbitR;
+        ball.vy = Math.cos(theta) * player.omega * orbitR;
+      }
+      if (CFG.ADD_PLAYER_VELOCITY_ON_THROW) {
+        ball.vx += player.vx;
+        ball.vy += player.vy;
+      }
+      // Nudge it just outside the player so it doesn't immediately register a collision.
+      ball.x += nx * CFG.RELEASE_NUDGE;
+      ball.y += ny * CFG.RELEASE_NUDGE;
+      ball.held = false;
+    }
+  } else {
+    // --- Free ball physics ---
+    ball.vx *= damp(CFG.BALL_FRICTION, dt);
+    ball.vy *= damp(CFG.BALL_FRICTION, dt);
+    ball.x += ball.vx * dt;
+    ball.y += ball.vy * dt;
+
+    // Wall bounces
+    if (ball.x - CFG.BALL_RADIUS < arena.left) {
+      ball.x = arena.left + CFG.BALL_RADIUS;
+      ball.vx = -ball.vx * CFG.WALL_RESTITUTION;
+    } else if (ball.x + CFG.BALL_RADIUS > arena.right) {
+      ball.x = arena.right - CFG.BALL_RADIUS;
+      ball.vx = -ball.vx * CFG.WALL_RESTITUTION;
+    }
+    if (ball.y - CFG.BALL_RADIUS < arena.top) {
+      ball.y = arena.top + CFG.BALL_RADIUS;
+      ball.vy = -ball.vy * CFG.WALL_RESTITUTION;
+    } else if (ball.y + CFG.BALL_RADIUS > arena.bottom) {
+      ball.y = arena.bottom - CFG.BALL_RADIUS;
+      ball.vy = -ball.vy * CFG.WALL_RESTITUTION;
+    }
+
+    // --- Player <-> ball interaction ---
+    const dx = ball.x - player.x;
+    const dy = ball.y - player.y;
+    const dist = Math.hypot(dx, dy);
+    const touchDist = CFG.PLAYER_RADIUS + CFG.BALL_RADIUS;
+    if (dist <= touchDist) {
+      if (lmbDown) {
+        // CATCH: grab the ball at the point of contact and remember its angular offset.
+        ball.held = true;
+        const contactAngle = Math.atan2(dy, dx);
+        ball.attachOffset = contactAngle - player.angle;
+      } else {
+        // BOUNCE off the player like an obstacle (relative-velocity reflection,
+        // so a moving player can knock a resting ball away).
+        const nx = dist > 0 ? dx / dist : 1;
+        const ny = dist > 0 ? dy / dist : 0;
+        const rvx = ball.vx - player.vx;
+        const rvy = ball.vy - player.vy;
+        const vn = rvx * nx + rvy * ny;
+        if (vn < 0) { // only if they're approaching each other
+          const j = -(1 + CFG.PLAYER_RESTITUTION) * vn;
+          ball.vx += j * nx;
+          ball.vy += j * ny;
+        }
+        // Push the ball out so it isn't overlapping the player.
+        ball.x = player.x + nx * (touchDist + 0.5);
+        ball.y = player.y + ny * (touchDist + 0.5);
+      }
+    }
+  }
+}
+
+// ---- Rendering ----
+function draw() {
+  ctx.clearRect(0, 0, W, H);
+
+  // Arena walls
+  ctx.fillStyle = "#1b2230";
+  ctx.fillRect(0, 0, W, H);
+  ctx.fillStyle = "#11161f";
+  ctx.fillRect(arena.left, arena.top, arena.right - arena.left, arena.bottom - arena.top);
+  ctx.strokeStyle = "#30363d";
+  ctx.lineWidth = 2;
+  ctx.strokeRect(arena.left, arena.top, arena.right - arena.left, arena.bottom - arena.top);
+
+  const orbitR = (CFG.PLAYER_RADIUS + CFG.BALL_RADIUS) * CFG.ORBIT_RADIUS_FACTOR;
+
+  // Player
+  ctx.beginPath();
+  ctx.arc(player.x, player.y, CFG.PLAYER_RADIUS, 0, Math.PI * 2);
+  ctx.fillStyle = ball.held ? "#3fb950" : "#58a6ff";
+  ctx.fill();
+  // Facing indicator (shows rotation)
+  ctx.beginPath();
+  ctx.moveTo(player.x, player.y);
+  ctx.lineTo(
+    player.x + Math.cos(player.angle) * CFG.PLAYER_RADIUS,
+    player.y + Math.sin(player.angle) * CFG.PLAYER_RADIUS
+  );
+  ctx.strokeStyle = "#0d1117";
+  ctx.lineWidth = 3;
+  ctx.stroke();
+
+  // Orbit guide while holding
+  if (ball.held) {
+    ctx.beginPath();
+    ctx.arc(player.x, player.y, orbitR, 0, Math.PI * 2);
+    ctx.strokeStyle = "rgba(63,185,80,0.25)";
+    ctx.lineWidth = 1;
+    ctx.stroke();
+  }
+
+  // Ball
+  ctx.beginPath();
+  ctx.arc(ball.x, ball.y, CFG.BALL_RADIUS, 0, Math.PI * 2);
+  ctx.fillStyle = "#f0883e";
+  ctx.fill();
+
+  // HUD: live physics readouts (handy for tuning)
+  const ballSpeed = Math.hypot(ball.vx, ball.vy);
+  const projThrow = Math.abs(player.omega) * orbitR;
+  hud.textContent =
+    `spin (omega):   ${player.omega.toFixed(2)} rad/s\n` +
+    `ball state:     ${ball.held ? "HELD" : "free"}\n` +
+    `ball speed:     ${ballSpeed.toFixed(0)} px/s\n` +
+    `throw if release now: ${projThrow.toFixed(0)} px/s\n` +
+    `mouse:          ${pointerLocked ? "LOCKED (drag freely)" : "free — click to lock"}`;
+}
+
+// ---- Main loop ----
+let last = performance.now();
+function frame(now) {
+  let dt = (now - last) / 1000;
+  last = now;
+  if (dt > 0.033) dt = 0.033; // clamp big hitches (e.g. tab switch) for stable physics
+  if (started) {
+    update(dt);
+    draw();
+  }
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
