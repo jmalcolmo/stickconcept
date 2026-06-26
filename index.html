@@ -98,10 +98,9 @@ const CFG = {
   PLAYER_RADIUS: 26,
   PLAYER_SPEED: 260,          // px/sec, WASD movement speed
 
-  // Spin / rotation (driven by horizontal mouse motion)
-  ROTATION_SENSITIVITY: 0.015, // rad/sec of spin added per pixel of horizontal mouse motion
-  ANGULAR_DAMPING: 0.90,       // per-frame (60fps) multiplier; spin winds down when you stop dragging
-  MAX_ANGULAR_VELOCITY: 26,    // rad/sec hard cap on spin speed
+  // Spin / rotation (driven DIRECTLY by horizontal mouse motion — 1:1, no inertia)
+  ROTATION_SENSITIVITY: 0.01,  // radians the player rotates per pixel of horizontal mouse motion
+  MAX_ANGULAR_VELOCITY: 22,    // rad/sec hard cap on spin speed (clamps a violent swipe -> caps throw power)
 
   // Ball
   BALL_RADIUS: 12,
@@ -237,12 +236,16 @@ function update(dt) {
   player.x = clamp(player.x, arena.left + CFG.PLAYER_RADIUS, arena.right - CFG.PLAYER_RADIUS);
   player.y = clamp(player.y, arena.top + CFG.PLAYER_RADIUS, arena.bottom - CFG.PLAYER_RADIUS);
 
-  // --- Spin: turn accumulated horizontal mouse motion into angular velocity ---
-  player.omega += mouseDXThisFrame * CFG.ROTATION_SENSITIVITY;
+  // --- Spin: rotation is driven DIRECTLY by horizontal mouse motion, no inertia.
+  // Stop the mouse and the spin stops instantly. omega is the real angular velocity
+  // for THIS frame, derived from how far the mouse moved — that's what the throw uses. ---
+  let deltaAngle = mouseDXThisFrame * CFG.ROTATION_SENSITIVITY;
   mouseDXThisFrame = 0;
-  player.omega *= damp(CFG.ANGULAR_DAMPING, dt);                 // flywheel wind-down
-  player.omega = clamp(player.omega, -CFG.MAX_ANGULAR_VELOCITY, CFG.MAX_ANGULAR_VELOCITY);
-  player.angle += player.omega * dt;
+  // Cap a single frame's rotation so an extremely fast swipe can't exceed the max spin speed.
+  const maxDelta = CFG.MAX_ANGULAR_VELOCITY * dt;
+  deltaAngle = clamp(deltaAngle, -maxDelta, maxDelta);
+  player.angle += deltaAngle;
+  player.omega = dt > 0 ? deltaAngle / dt : 0;
 
   const orbitR = (CFG.PLAYER_RADIUS + CFG.BALL_RADIUS) * CFG.ORBIT_RADIUS_FACTOR;
 
