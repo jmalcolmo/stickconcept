@@ -79,6 +79,7 @@
     <h1>Spin-Throw Arena</h1>
     <p><span class="key">WASD</span> move &nbsp;•&nbsp; <span class="key">move mouse left/right</span> to spin</p>
     <p><span class="key">Hold left-click</span> + touch the ball to catch &nbsp;•&nbsp; <span class="key">release</span> to throw</p>
+    <p><span class="key">Space</span> set the held ball straight up (release with no spin = launch outward)</p>
     <button id="startBtn" type="button">Start Game</button>
   </div>
 
@@ -86,7 +87,7 @@
   <div id="gameScreen" class="screen hidden">
     <canvas id="game" width="960" height="640"></canvas>
     <div id="hud"></div>
-    <p id="hint">Hold left-click on the ball to catch · move mouse left/right to spin up · release to throw · Esc frees the mouse</p>
+    <p id="hint">Hold left-click to catch · move mouse left/right to spin up · release to throw · Space = set straight up · Esc frees the mouse</p>
   </div>
 
 <script>
@@ -116,6 +117,8 @@ const CFG = {
   // Throw
   ADD_PLAYER_VELOCITY_ON_THROW: true, // also impart the player's running velocity to the thrown ball
   RELEASE_NUDGE: 2,            // px the ball is pushed outward on release so it doesn't instantly re-collide
+  SET_RELEASE_OMEGA_THRESHOLD: 0.5,   // below this spin (rad/s), a release is a "set": fired straight out
+  SET_RELEASE_SPEED_FACTOR: 0.5,      // a no-spin ("set") release launches at this fraction of max throw speed
 
   // Arena
   WALL_THICKNESS: 16,
@@ -186,6 +189,12 @@ startBtn.addEventListener("click", startGame);
 window.addEventListener("keydown", (e) => {
   const k = e.key.toLowerCase();
   if (k in keys) { keys[k] = true; e.preventDefault(); }
+  // SET: while holding the ball, snap it directly north (straight up) of the player,
+  // instantly — just re-anchor its orbit offset so this frame's angle points up.
+  if (e.code === "Space" && started) {
+    if (ball.held) ball.attachOffset = -Math.PI / 2 - player.angle;
+    e.preventDefault(); // don't let space scroll the page
+  }
 });
 window.addEventListener("keyup", (e) => {
   const k = e.key.toLowerCase();
@@ -256,18 +265,27 @@ function update(dt) {
     ball.y = player.y + Math.sin(theta) * orbitR;
 
     if (!lmbDown) {
-      // --- THROW --- launch with the ball's REAL tangential velocity at this instant.
-      // A point orbiting at angle theta with angular velocity omega has
-      // tangential velocity = omega * R in the tangent direction (-sin, cos).
-      const tangent = { x: -Math.sin(theta), y: Math.cos(theta) };
-      ball.vx = tangent.x * player.omega * orbitR;
-      ball.vy = tangent.y * player.omega * orbitR;
+      const nx = Math.cos(theta), ny = Math.sin(theta); // radial (outward-from-center) direction
+      const maxThrowSpeed = CFG.MAX_ANGULAR_VELOCITY * orbitR;
+      if (Math.abs(player.omega) < CFG.SET_RELEASE_OMEGA_THRESHOLD) {
+        // SET RELEASE: no meaningful spin, so there's no tangential velocity to throw with.
+        // Launch the ball straight outward from the player's center (e.g. straight up after
+        // a "set") at a fixed fraction of the max throw speed.
+        const setSpeed = maxThrowSpeed * CFG.SET_RELEASE_SPEED_FACTOR;
+        ball.vx = nx * setSpeed;
+        ball.vy = ny * setSpeed;
+      } else {
+        // THROW: launch with the ball's REAL tangential velocity at this instant. A point
+        // orbiting at angle theta with angular velocity omega has tangential velocity
+        // omega * R in the tangent direction (-sin, cos).
+        ball.vx = -Math.sin(theta) * player.omega * orbitR;
+        ball.vy = Math.cos(theta) * player.omega * orbitR;
+      }
       if (CFG.ADD_PLAYER_VELOCITY_ON_THROW) {
         ball.vx += player.vx;
         ball.vy += player.vy;
       }
       // Nudge it just outside the player so it doesn't immediately register a collision.
-      const nx = Math.cos(theta), ny = Math.sin(theta);
       ball.x += nx * CFG.RELEASE_NUDGE;
       ball.y += ny * CFG.RELEASE_NUDGE;
       ball.held = false;
