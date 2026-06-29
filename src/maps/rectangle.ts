@@ -16,7 +16,7 @@ export function rectangleArena(width = 960, height = 640, wt = 16): ArenaMap {
     name: "Closed Arena",
     width,
     height,
-    background: "#11161f",
+    background: "#0d0a10",
     bounds: { left: wt, top: wt, right: width - wt, bottom: height - wt },
     walls: [
       { x1: h, y1: 0, x2: h, y2: height, thickness: wt }, // left

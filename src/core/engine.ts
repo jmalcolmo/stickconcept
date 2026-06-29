@@ -85,6 +85,10 @@ export class Engine {
     this.input.requestLock();
     this.running = true;
     this.last = performance.now();
+
+    // Paint the opening scene immediately so the arena is on-screen this tick,
+    // instead of flashing an empty canvas until the first animation frame.
+    this.paint();
   }
 
   unloadMode(): void {
@@ -160,9 +164,7 @@ export class Engine {
     this.mode.update?.(this.ctx, dt);
 
     // 4. Render: core scene, then optional mode overlay.
-    const c = this.canvas.getContext("2d")!;
-    this.renderer.render(this.world);
-    this.mode.drawOverlay?.(this.ctx, c);
+    this.paint();
 
     // 5. Win/lose check (fires once).
     if (!this.over && this.mode.isOver?.(this.ctx)) {
@@ -172,4 +174,12 @@ export class Engine {
       this.callbacks.onModeOver?.(this.mode, this.hud);
     }
   };
+
+  /** Draw the current world: core scene, then the active mode's overlay. */
+  private paint(): void {
+    if (!this.mode || !this.ctx) return;
+    const c = this.canvas.getContext("2d")!;
+    this.renderer.render(this.world);
+    this.mode.drawOverlay?.(this.ctx, c);
+  }
 }
