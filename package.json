@@ -1,0 +1,17 @@
+{
+  "name": "stick-sandbox",
+  "private": true,
+  "version": "0.2.0",
+  "type": "module",
+  "description": "A spin-throw board-and-ball sandbox that hosts many game modes on a shared physics core.",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "typescript": "^6.0.3",
+    "vite": "^8.1.0"
+  }
+}
