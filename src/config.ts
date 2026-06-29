@@ -22,6 +22,11 @@ export interface Config {
   PROP_RESTITUTION: number;
   ADD_PLAYER_VELOCITY_ON_THROW: boolean;
   RELEASE_NUDGE: number;
+
+  // Hit effects (purely visual damage hitmarkers when the ball strikes a wall)
+  HIT_DAMAGE_PER_SPEED: number;
+  HIT_MIN_SPEED: number;
+  HIT_CRIT_SPEED: number;
 }
 
 export const CFG: Config = {
@@ -50,4 +55,10 @@ export const CFG: Config = {
   // Throw
   ADD_PLAYER_VELOCITY_ON_THROW: true, // also impart the player's running velocity to the thrown ball
   RELEASE_NUDGE: 2, // px the ball is pushed outward on release so it doesn't instantly re-collide
+
+  // Hit effects — when the ball slams a wall, a damage number pops where it hit.
+  // Damage is just for show (does nothing yet); these only tune how it reads.
+  HIT_DAMAGE_PER_SPEED: 99, // damage = round(impactSpeed * this) → big, satisfying numbers
+  HIT_MIN_SPEED: 45, // px/sec; soft taps below this spawn no hitmarker (avoids spam)
+  HIT_CRIT_SPEED: 700, // px/sec impact that reads as a full-power "crit" (max size + heat)
 };
