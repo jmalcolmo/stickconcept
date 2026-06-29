@@ -5,6 +5,7 @@ import { World } from "./world";
 import { EventBus } from "./events";
 import { KeyboardMouseInput, type InputState } from "./input";
 import { Renderer } from "./renderer";
+import { FloatingText } from "./floatingText";
 import { step } from "./physics";
 
 const PRIMARY_INPUT = "kbm";
@@ -25,6 +26,7 @@ export class Engine {
   private readonly bus = new EventBus();
   private readonly input = new KeyboardMouseInput();
   private readonly renderer: Renderer;
+  private readonly floaters: FloatingText;
   private readonly inputs = new Map<string, InputState>();
 
   private mode: GameMode | null = null;
@@ -45,6 +47,7 @@ export class Engine {
     if (!c) throw new Error("2D canvas context unavailable");
     this.world = new World(cfg);
     this.renderer = new Renderer(c, cfg);
+    this.floaters = new FloatingText(cfg);
     this.input.attach(canvas);
     requestAnimationFrame(this.frame);
   }
@@ -57,6 +60,20 @@ export class Engine {
     this.canvas.width = map.width;
     this.canvas.height = map.height;
     this.world.loadMap(map);
+
+    // Core hit-effects: spawn a damage hitmarker wherever the ball strikes a
+    // wall. Re-subscribed each load (unloadMode clears the bus) and lives
+    // outside the mode's own subscriptions so every mode gets it for free.
+    // A mode with no combat (e.g. Zone Rush) can opt out via `showHitDamage`.
+    this.floaters.clear();
+    this.bus.on("ballHitWall", (e) => {
+      if (this.mode?.showHitDamage === false) return; // mode opted out of damage FX
+      if (e.speed < this.cfg.HIT_MIN_SPEED) return; // ignore soft taps
+      const damage = Math.round(e.speed * this.cfg.HIT_DAMAGE_PER_SPEED);
+      // Drift the number along the ball's post-bounce (rebound) direction.
+      const ball = this.world.getBall(e.ballId);
+      this.floaters.spawnDamage(e.x, e.y, damage, e.speed, ball?.vx ?? 0, ball?.vy ?? 0);
+    });
 
     // Spawn player boards from the map's player spawns (first gets the keyboard).
     const playerSpawns = map.spawns.filter((s) => s.type === "player");
@@ -96,6 +113,7 @@ export class Engine {
     for (const unsub of this.subscriptions) unsub();
     this.subscriptions = [];
     this.bus.clear();
+    this.floaters.clear();
     this.mode = null;
     this.ctx = null;
     this.running = false;
@@ -124,6 +142,7 @@ export class Engine {
       },
       spawnBall: (x, y, opts) => this.world.spawnBall(x, y, opts),
       spawnProp: (opts) => this.world.spawnProp(opts),
+      popText: (x, y, text, opts) => this.floaters.spawn(x, y, text, opts),
       removeBall: (id) => this.world.removeBall(id),
       removeProp: (id) => this.world.removeProp(id),
       board: (i = 0) => this.world.boards[i],
@@ -163,6 +182,9 @@ export class Engine {
     // 3. Mode logic.
     this.mode.update?.(this.ctx, dt);
 
+    // 3b. Advance transient visual effects (damage numbers, score pops, etc.).
+    this.floaters.update(dt);
+
     // 4. Render: core scene, then optional mode overlay.
     this.paint();
 
@@ -181,5 +203,6 @@ export class Engine {
     const c = this.canvas.getContext("2d")!;
     this.renderer.render(this.world);
     this.mode.drawOverlay?.(this.ctx, c);
+    this.floaters.draw(c); // popups sit on top of everything
   }
 }

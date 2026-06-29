@@ -1,5 +1,6 @@
 import type { ArenaMap, Ball, PlayerBoard, Prop, EventType, EventOf } from "../core/types";
 import type { World } from "../core/world";
+import type { FloatTextOpts } from "../core/floatingText";
 import type { Config } from "../config";
 
 /** Lines of text shown in the in-game HUD (top-centre scoreboard). */
@@ -36,6 +37,12 @@ export interface ModeContext {
   removeBall(id: number): void;
   removeProp(id: number): void;
 
+  /**
+   * Spawn a floating text popup (e.g. a "+1" on a score) at world coordinates.
+   * Pure visual juice, drawn on top of everything; it rises gently and fades.
+   */
+  popText(x: number, y: number, text: string, opts?: FloatTextOpts): void;
+
   /** The i-th player board (default 0). Most single-player modes use board 0. */
   board(i?: number): PlayerBoard | undefined;
 
@@ -68,6 +75,13 @@ export interface GameMode {
   description: string;
   /** Optional labels for the browse menu (e.g. ["solo", "practice"]). */
   tags?: string[];
+
+  /**
+   * Whether the core's wall-hit damage numbers appear in this mode. Defaults to
+   * true; combat-free modes (e.g. Zone Rush) set false and supply their own
+   * popups via `ctx.popText`.
+   */
+  showHitDamage?: boolean;
 
   /** The arena. Either a fixed map or a factory (use a factory for randomness). */
   map: ArenaMap | (() => ArenaMap);

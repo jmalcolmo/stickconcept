@@ -191,7 +191,8 @@ function collideBallWithWalls(ball: Ball, world: World, bus: EventBus, cfg: Conf
       const e = w.restitution ?? cfg.WALL_RESTITUTION;
       ball.vx -= (1 + e) * vn * nx;
       ball.vy -= (1 + e) * vn * ny;
-      bus.emit({ type: "ballHitWall", ballId: ball.id, wallIndex: i });
+      // `-vn` is the closing speed normal to the wall: how hard it struck.
+      bus.emit({ type: "ballHitWall", ballId: ball.id, wallIndex: i, x: cp.x, y: cp.y, speed: -vn });
     }
     // Depenetrate.
     ball.x = cp.x + nx * touch;
