@@ -59,6 +59,7 @@ export const zoneRush: GameMode = {
   description: "A target lights up — flick the ball into it. Score as many as you can in 60s.",
   tags: ["solo", "score-attack"],
   map: buildMap,
+  showHitDamage: false, // no combat here — score pops with a "+1" instead
 
   setup(ctx) {
     const state = ctx.state as ZoneRushState;
@@ -72,6 +73,18 @@ export const zoneRush: GameMode = {
     ctx.on("ballEnteredZone", (e) => {
       if (e.tags.includes("target")) {
         state.score += 1;
+        // Pop a "+1" where the zone was cleared (capture before it jumps away).
+        const zone = ctx.map.zones.find((z) => z.id === state.zoneId);
+        if (zone && zone.shape.kind === "circle") {
+          ctx.popText(zone.shape.x, zone.shape.y, "+1", {
+            color: "#7ee787",
+            size: 26,
+            glowColor: "rgba(110, 231, 135, 0.6)",
+            glowBlur: 16,
+            rise: 34,
+            life: 1,
+          });
+        }
         moveTarget(ctx);
       }
     });

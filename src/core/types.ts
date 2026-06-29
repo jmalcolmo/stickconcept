@@ -137,7 +137,16 @@ export interface Prop {
 export type GameEvent =
   | { type: "ballCaught"; ballId: number; boardId: number }
   | { type: "ballFlicked"; ballId: number; boardId: number; speed: number }
-  | { type: "ballHitWall"; ballId: number; wallIndex: number }
+  | {
+      type: "ballHitWall";
+      ballId: number;
+      wallIndex: number;
+      /** Contact point on the wall (where a hit effect should appear). */
+      x: number;
+      y: number;
+      /** Closing speed into the wall, px/sec — how hard the ball struck. */
+      speed: number;
+    }
   | { type: "ballEnteredZone"; ballId: number; zoneId: string; tags: string[] }
   | { type: "ballExitedZone"; ballId: number; zoneId: string; tags: string[] }
   | { type: "ballHitProp"; ballId: number; propId: number; kind: string }
