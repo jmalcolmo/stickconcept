@@ -72,8 +72,9 @@ function updateBoardMotion(
     mx /= len;
     my /= len;
   }
-  board.vx = mx * cfg.PLAYER_SPEED;
-  board.vy = my * cfg.PLAYER_SPEED;
+  const speed = cfg.PLAYER_SPEED * board.speedMul;
+  board.vx = mx * speed;
+  board.vy = my * speed;
   board.x += board.vx * dt;
   board.y += board.vy * dt;
   // Keep the pivot inside the map bounds (board tips may overhang).

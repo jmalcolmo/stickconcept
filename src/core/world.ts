@@ -41,6 +41,7 @@ export class World {
       heldBallId: null,
       inputId,
       action: false,
+      speedMul: 1,
     };
     this.boards.push(board);
     return board;
