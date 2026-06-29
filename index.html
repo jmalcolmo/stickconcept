@@ -77,9 +77,9 @@
   <!-- START SCREEN -->
   <div id="startScreen" class="screen">
     <h1>Spin-Throw Arena</h1>
-    <p><span class="key">WASD</span> move &nbsp;•&nbsp; <span class="key">move mouse left/right</span> to spin</p>
-    <p><span class="key">Hold left-click</span> + touch the ball to catch &nbsp;•&nbsp; <span class="key">release</span> to throw</p>
-    <p><span class="key">Space</span> set the held ball straight up (release with no spin = launch outward)</p>
+    <p><span class="key">WASD</span> move &nbsp;•&nbsp; <span class="key">move mouse left/right</span> to spin the board</p>
+    <p><span class="key">Hold left-click</span> + touch the board to catch the ball</p>
+    <p>Hold to carry &amp; reposition &nbsp;•&nbsp; <span class="key">spin + release</span> to flick the ball off the board</p>
     <button id="startBtn" type="button">Start Game</button>
   </div>
 
@@ -87,7 +87,7 @@
   <div id="gameScreen" class="screen hidden">
     <canvas id="game" width="960" height="640"></canvas>
     <div id="hud"></div>
-    <p id="hint">Hold left-click to catch · move mouse left/right to spin up · release to throw · Space = set straight up · Esc frees the cursor (click to re-lock)</p>
+    <p id="hint">Hold left-click to catch &amp; carry · spin and release to flick · release while still to drop · Esc frees the cursor (click to re-lock)</p>
   </div>
 
 <script>
@@ -96,29 +96,35 @@
 // =============================================================
 const CFG = {
   // Player movement (independent of rotation)
-  PLAYER_RADIUS: 26,
-  PLAYER_SPEED: 260,          // px/sec, WASD movement speed
+  PLAYER_SPEED: 260,           // px/sec, WASD movement speed
+  PLAYER_BOUND_RADIUS: 14,     // how far the pivot is kept from the walls (board tips may overhang)
 
   // Spin / rotation (driven DIRECTLY by horizontal mouse motion — 1:1, no inertia)
   ROTATION_SENSITIVITY: 0.01,  // radians the player rotates per pixel of horizontal mouse motion
-  MAX_ANGULAR_VELOCITY: 22,    // rad/sec hard cap on spin speed (clamps a violent swipe -> caps throw power)
+  MAX_ANGULAR_VELOCITY: 16,    // rad/sec hard cap on spin speed (clamps a violent swipe -> caps flick power)
+
+  // The character is a flat BOARD (a thick line) that pivots at the player's center.
+  BOARD_LENGTH: 92,            // px, tip-to-tip length
+  BOARD_THICKNESS: 16,         // px, how thick the board renders / collides
 
   // Ball
   BALL_RADIUS: 12,
   BALL_FRICTION: 0.997,        // per-frame (60fps) linear damping on a free ball (1 = frictionless)
 
-  // Orbit while held: ball sits on player's edge. Radius = sum of radii * this factor.
-  ORBIT_RADIUS_FACTOR: 1.0,    // 1.0 = ball touches the player's edge exactly
+  // Flick: a held ball stays locked to the board for as long as you hold left-click — spin
+  // and move to reposition it freely. RELEASING left-click flicks it: the ball launches with
+  // whatever velocity the spin gives it at that instant (release mid-spin = hard flick).
 
   // Collisions / bounce
-  WALL_RESTITUTION: 0.9,       // how bouncy arena walls are (1 = perfectly elastic)
-  PLAYER_RESTITUTION: 0.85,    // how bouncy the player is when the ball hits them (not holding)
+  WALL_RESTITUTION: 0.75,      // how bouncy arena walls are (1 = perfectly elastic)
+  PLAYER_RESTITUTION: 0.1,     // bounce off a STILL board — keep low so a still board kills momentum
+  BOARD_GRIP: 0.85,            // how much of the ball's slide along the board is killed on contact
+                               // (toward 1 = the ball dead-stops on a still board; the flick becomes
+                               //  the only real way to give the ball speed — the point of the game)
 
   // Throw
   ADD_PLAYER_VELOCITY_ON_THROW: true, // also impart the player's running velocity to the thrown ball
   RELEASE_NUDGE: 2,            // px the ball is pushed outward on release so it doesn't instantly re-collide
-  SET_RELEASE_OMEGA_THRESHOLD: 0.5,   // below this spin (rad/s), a release is a "set": fired straight out
-  SET_RELEASE_SPEED_FACTOR: 0.5,      // a no-spin ("set") release launches at this fraction of max throw speed
 
   // Arena
   WALL_THICKNESS: 16,
@@ -158,9 +164,10 @@ const ball = {
   vx: 0,
   vy: 0,
   held: false,
-  // angular offset of the ball relative to player.angle, captured at the moment of catch
-  // (so the ball grabs onto wherever it touched, then orbits with the player)
-  attachOffset: 0,
+  // While held, the ball is locked to one face of the board at a fixed point and rides along
+  // with it (no sliding). Releasing left-click flicks it.
+  s: 0,        // position along the board axis where it was grabbed (px), in [-L/2, L/2]
+  side: 1,     // which face it's stuck to: +1 or -1 (sign along the board normal)
 };
 
 // Input state
@@ -199,12 +206,6 @@ document.addEventListener("pointerlockerror", () => { pointerLocked = false; });
 window.addEventListener("keydown", (e) => {
   const k = e.key.toLowerCase();
   if (k in keys) { keys[k] = true; e.preventDefault(); }
-  // SET: while holding the ball, snap it directly north (straight up) of the player,
-  // instantly — just re-anchor its orbit offset so this frame's angle points up.
-  if (e.code === "Space" && started) {
-    if (ball.held) ball.attachOffset = -Math.PI / 2 - player.angle;
-    e.preventDefault(); // don't let space scroll the page
-  }
 });
 window.addEventListener("keyup", (e) => {
   const k = e.key.toLowerCase();
@@ -232,6 +233,13 @@ window.addEventListener("mousemove", (e) => {
 function clamp(v, lo, hi) { return v < lo ? lo : (v > hi ? hi : v); }
 // Convert a per-60fps-frame multiplier into a dt-correct factor
 function damp(perFrame, dt) { return Math.pow(perFrame, dt * 60); }
+// Closest point on segment A->B to point P (used to collide the ball with the board capsule)
+function closestPointOnSegment(px, py, ax, ay, bx, by) {
+  const abx = bx - ax, aby = by - ay;
+  const len2 = abx * abx + aby * aby;
+  const t = len2 > 0 ? clamp(((px - ax) * abx + (py - ay) * aby) / len2, 0, 1) : 0;
+  return { x: ax + t * abx, y: ay + t * aby };
+}
 
 // ---- Simulation ----
 function update(dt) {
@@ -246,9 +254,9 @@ function update(dt) {
   player.vy = my * CFG.PLAYER_SPEED;
   player.x += player.vx * dt;
   player.y += player.vy * dt;
-  // Keep player inside the arena
-  player.x = clamp(player.x, arena.left + CFG.PLAYER_RADIUS, arena.right - CFG.PLAYER_RADIUS);
-  player.y = clamp(player.y, arena.top + CFG.PLAYER_RADIUS, arena.bottom - CFG.PLAYER_RADIUS);
+  // Keep the pivot inside the arena (the board tips may overhang the walls a little)
+  player.x = clamp(player.x, arena.left + CFG.PLAYER_BOUND_RADIUS, arena.right - CFG.PLAYER_BOUND_RADIUS);
+  player.y = clamp(player.y, arena.top + CFG.PLAYER_BOUND_RADIUS, arena.bottom - CFG.PLAYER_BOUND_RADIUS);
 
   // --- Spin: rotation is driven DIRECTLY by horizontal mouse motion, no inertia.
   // Stop the mouse and the spin stops instantly. omega is the real angular velocity
@@ -261,38 +269,38 @@ function update(dt) {
   player.angle += deltaAngle;
   player.omega = dt > 0 ? deltaAngle / dt : 0;
 
-  const orbitR = (CFG.PLAYER_RADIUS + CFG.BALL_RADIUS) * CFG.ORBIT_RADIUS_FACTOR;
+  // Board orientation: axis runs tip-to-tip; normal is perpendicular (the face direction).
+  const ax = Math.cos(player.angle), ay = Math.sin(player.angle);
+  const nx = -ay, ny = ax;
+  const halfLen = CFG.BOARD_LENGTH / 2;
+  const faceOffset = CFG.BOARD_THICKNESS / 2 + CFG.BALL_RADIUS;
 
   if (ball.held) {
-    // Ball is locked to the player's circumference at its captured angular offset.
-    const theta = player.angle + ball.attachOffset;
-    ball.x = player.x + Math.cos(theta) * orbitR;
-    ball.y = player.y + Math.sin(theta) * orbitR;
+    // The held ball is LOCKED to the board at a fixed point. It rides along as you move and
+    // spin and stays put no matter how hard you spin — hold as long as you like to reposition
+    // (e.g. grab in a corner, turn around, place the ball on the far side, then flick).
+    const h = ball.side * faceOffset;
+    const rx = ball.s * ax + h * nx;
+    const ry = ball.s * ay + h * ny;
+    ball.x = player.x + rx;
+    ball.y = player.y + ry;
 
     if (!lmbDown) {
-      const nx = Math.cos(theta), ny = Math.sin(theta); // radial (outward-from-center) direction
-      const maxThrowSpeed = CFG.MAX_ANGULAR_VELOCITY * orbitR;
-      if (Math.abs(player.omega) < CFG.SET_RELEASE_OMEGA_THRESHOLD) {
-        // SET RELEASE: no meaningful spin, so there's no tangential velocity to throw with.
-        // Launch the ball straight outward from the player's center (e.g. straight up after
-        // a "set") at a fixed fraction of the max throw speed.
-        const setSpeed = maxThrowSpeed * CFG.SET_RELEASE_SPEED_FACTOR;
-        ball.vx = nx * setSpeed;
-        ball.vy = ny * setSpeed;
-      } else {
-        // THROW: launch with the ball's REAL tangential velocity at this instant. A point
-        // orbiting at angle theta with angular velocity omega has tangential velocity
-        // omega * R in the tangent direction (-sin, cos).
-        ball.vx = -Math.sin(theta) * player.omega * orbitR;
-        ball.vy = Math.cos(theta) * player.omega * orbitR;
+      // RELEASE = flick. Launch with the contact point's real velocity at this instant: the
+      // rotation about the pivot (omega * arm). With the ball out on the face that points
+      // along the board's normal — the side of the board shoves it away. Release mid-spin for
+      // a hard flick; release while still for a gentle drop.
+      const rotVx = -player.omega * ry, rotVy = player.omega * rx;
+      let vX = rotVx, vY = rotVy;
+      if (CFG.ADD_PLAYER_VELOCITY_ON_THROW) { vX += player.vx; vY += player.vy; }
+      ball.vx = vX;
+      ball.vy = vY;
+      // Nudge the ball out along its launch direction so it doesn't instantly re-hit the board.
+      const sp = Math.hypot(vX, vY);
+      if (sp > 0) {
+        ball.x += (vX / sp) * (CFG.BALL_RADIUS + CFG.RELEASE_NUDGE);
+        ball.y += (vY / sp) * (CFG.BALL_RADIUS + CFG.RELEASE_NUDGE);
       }
-      if (CFG.ADD_PLAYER_VELOCITY_ON_THROW) {
-        ball.vx += player.vx;
-        ball.vy += player.vy;
-      }
-      // Nudge it just outside the player so it doesn't immediately register a collision.
-      ball.x += nx * CFG.RELEASE_NUDGE;
-      ball.y += ny * CFG.RELEASE_NUDGE;
       ball.held = false;
     }
   } else {
@@ -318,33 +326,44 @@ function update(dt) {
       ball.vy = -ball.vy * CFG.WALL_RESTITUTION;
     }
 
-    // --- Player <-> ball interaction ---
-    const dx = ball.x - player.x;
-    const dy = ball.y - player.y;
+    // --- Board <-> ball interaction (board treated as a capsule: segment + thickness) ---
+    const Ax = player.x - halfLen * ax, Ay = player.y - halfLen * ay;
+    const Bx = player.x + halfLen * ax, By = player.y + halfLen * ay;
+    const cp = closestPointOnSegment(ball.x, ball.y, Ax, Ay, Bx, By);
+    const dx = ball.x - cp.x, dy = ball.y - cp.y;
     const dist = Math.hypot(dx, dy);
-    const touchDist = CFG.PLAYER_RADIUS + CFG.BALL_RADIUS;
+    const touchDist = CFG.BOARD_THICKNESS / 2 + CFG.BALL_RADIUS;
     if (dist <= touchDist) {
+      // Surface normal at contact (from the board's surface out toward the ball).
+      const cnx = dist > 0 ? dx / dist : nx;
+      const cny = dist > 0 ? dy / dist : ny;
       if (lmbDown) {
-        // CATCH: grab the ball at the point of contact and remember its angular offset.
+        // CATCH: stick the ball to the face it touched. Record where along the board (s) and
+        // which side it's on, so it can then slide along the face and eventually flick off.
+        const relx = ball.x - player.x, rely = ball.y - player.y;
+        ball.s = clamp(relx * ax + rely * ay, -halfLen, halfLen);
+        ball.side = (relx * nx + rely * ny) >= 0 ? 1 : -1;
         ball.held = true;
-        const contactAngle = Math.atan2(dy, dx);
-        ball.attachOffset = contactAngle - player.angle;
       } else {
-        // BOUNCE off the player like an obstacle (relative-velocity reflection,
-        // so a moving player can knock a resting ball away).
-        const nx = dist > 0 ? dx / dist : 1;
-        const ny = dist > 0 ? dy / dist : 0;
-        const rvx = ball.vx - player.vx;
-        const rvy = ball.vy - player.vy;
-        const vn = rvx * nx + rvy * ny;
-        if (vn < 0) { // only if they're approaching each other
-          const j = -(1 + CFG.PLAYER_RESTITUTION) * vn;
-          ball.vx += j * nx;
-          ball.vy += j * ny;
-        }
-        // Push the ball out so it isn't overlapping the player.
-        ball.x = player.x + nx * (touchDist + 0.5);
-        ball.y = player.y + ny * (touchDist + 0.5);
+        // ABSORB / SMACK. Kill the ball's velocity RELATIVE to the board's moving surface. A
+        // still board → the ball drops dead against it, so the FLICK is the only real way to put
+        // speed on the ball (that's the whole game). A spinning/moving board drags the ball along
+        // with its surface and flings it.
+        const rcx = cp.x - player.x, rcy = cp.y - player.y;
+        const pvx = player.vx - player.omega * rcy;   // board surface velocity at the contact point
+        const pvy = player.vy + player.omega * rcx;
+        const rvx = ball.vx - pvx, rvy = ball.vy - pvy; // ball velocity relative to that surface
+        // Split the relative velocity into normal + tangential and bleed off almost all of it.
+        const vn = rvx * cnx + rvy * cny;
+        const tnx = -cny, tny = cnx;                  // surface tangent direction
+        const vt = rvx * tnx + rvy * tny;
+        const newVn = vn < 0 ? -vn * CFG.PLAYER_RESTITUTION : vn; // faint bounce only if approaching
+        const newVt = vt * (1 - CFG.BOARD_GRIP);                  // grip kills the slide-along
+        ball.vx = pvx + newVn * cnx + newVt * tnx;
+        ball.vy = pvy + newVn * cny + newVt * tny;
+        // Push the ball out so it isn't overlapping the board.
+        ball.x = cp.x + cnx * (touchDist + 0.5);
+        ball.y = cp.y + cny * (touchDist + 0.5);
       }
     }
   }
@@ -363,32 +382,25 @@ function draw() {
   ctx.lineWidth = 2;
   ctx.strokeRect(arena.left, arena.top, arena.right - arena.left, arena.bottom - arena.top);
 
-  const orbitR = (CFG.PLAYER_RADIUS + CFG.BALL_RADIUS) * CFG.ORBIT_RADIUS_FACTOR;
+  const ax = Math.cos(player.angle), ay = Math.sin(player.angle);
+  const halfLen = CFG.BOARD_LENGTH / 2;
+  const Ax = player.x - halfLen * ax, Ay = player.y - halfLen * ay;
+  const Bx = player.x + halfLen * ax, By = player.y + halfLen * ay;
 
-  // Player
+  // Board (a thick, round-capped line that pivots at the player's center)
+  ctx.lineCap = "round";
+  ctx.lineWidth = CFG.BOARD_THICKNESS;
+  ctx.strokeStyle = ball.held ? "#3fb950" : "#58a6ff";
   ctx.beginPath();
-  ctx.arc(player.x, player.y, CFG.PLAYER_RADIUS, 0, Math.PI * 2);
-  ctx.fillStyle = ball.held ? "#3fb950" : "#58a6ff";
-  ctx.fill();
-  // Facing indicator (shows rotation)
-  ctx.beginPath();
-  ctx.moveTo(player.x, player.y);
-  ctx.lineTo(
-    player.x + Math.cos(player.angle) * CFG.PLAYER_RADIUS,
-    player.y + Math.sin(player.angle) * CFG.PLAYER_RADIUS
-  );
-  ctx.strokeStyle = "#0d1117";
-  ctx.lineWidth = 3;
+  ctx.moveTo(Ax, Ay);
+  ctx.lineTo(Bx, By);
   ctx.stroke();
-
-  // Orbit guide while holding
-  if (ball.held) {
-    ctx.beginPath();
-    ctx.arc(player.x, player.y, orbitR, 0, Math.PI * 2);
-    ctx.strokeStyle = "rgba(63,185,80,0.25)";
-    ctx.lineWidth = 1;
-    ctx.stroke();
-  }
+  ctx.lineCap = "butt";
+  // Pivot dot
+  ctx.beginPath();
+  ctx.arc(player.x, player.y, 3, 0, Math.PI * 2);
+  ctx.fillStyle = "#0d1117";
+  ctx.fill();
 
   // Ball
   ctx.beginPath();
@@ -398,12 +410,11 @@ function draw() {
 
   // HUD: live physics readouts (handy for tuning)
   const ballSpeed = Math.hypot(ball.vx, ball.vy);
-  const projThrow = Math.abs(player.omega) * orbitR;
   hud.textContent =
     `spin (omega):   ${player.omega.toFixed(2)} rad/s\n` +
     `ball state:     ${ball.held ? "HELD" : "free"}\n` +
     `ball speed:     ${ballSpeed.toFixed(0)} px/s\n` +
-    `throw if release now: ${projThrow.toFixed(0)} px/s\n` +
+    (ball.held ? `grab pos:       ${ball.s.toFixed(0)} px from center\n` : "") +
     `mouse:          ${pointerLocked ? "LOCKED (drag freely)" : "free — click to lock"}`;
 }
 
