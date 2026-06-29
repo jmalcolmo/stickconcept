@@ -1,0 +1,145 @@
+:root {
+  --bg: #0e1117;
+  --panel: #161b22;
+  --fg: #c9d1d9;
+  --muted: #8b949e;
+  --dim: #6e7681;
+  --accent: #58a6ff;
+  --accent-hi: #79b8ff;
+  --line: #30363d;
+}
+
+html, body {
+  margin: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+  overflow: hidden;
+}
+
+/* Each "screen" fills the window; exactly one is shown at a time. */
+.screen {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+.screen.hidden { display: none; }
+
+/* ---------- Menu ---------- */
+.menu-header { text-align: center; margin-bottom: 22px; }
+.menu-header h1 { margin: 0; font-size: 30px; color: #e6edf3; letter-spacing: 0.5px; }
+.menu-header p { margin: 6px 0 0; font-size: 13px; color: var(--muted); }
+
+#modeList { width: min(880px, 92vw); }
+.mode-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 14px;
+}
+.mode-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  text-align: left;
+  padding: 18px;
+  font: inherit;
+  color: var(--fg);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  cursor: pointer;
+  transition: border-color 0.15s, transform 0.05s, background 0.15s;
+}
+.mode-card:hover { border-color: var(--accent); background: #1b2230; }
+.mode-card:active { transform: translateY(1px); }
+.mode-name { font-size: 17px; font-weight: 600; color: #e6edf3; }
+.mode-desc { font-size: 12.5px; line-height: 1.5; color: var(--muted); }
+.mode-tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 2px; }
+.mode-tags em {
+  font-style: normal;
+  font-size: 10.5px;
+  color: var(--accent);
+  background: rgba(88, 166, 255, 0.1);
+  border: 1px solid rgba(88, 166, 255, 0.25);
+  border-radius: 999px;
+  padding: 2px 8px;
+}
+
+.menu-footer { margin-top: 26px; font-size: 12px; color: var(--dim); }
+.key { color: var(--accent); }
+
+/* ---------- Game ---------- */
+#gameScreen canvas {
+  background: #11161f;
+  box-shadow: 0 0 0 1px var(--line), 0 10px 40px rgba(0, 0, 0, 0.5);
+  cursor: crosshair;
+}
+#hud {
+  position: absolute;
+  top: 14px;
+  left: 0;
+  right: 0;
+  text-align: center;
+  pointer-events: none;
+}
+.hud-title { font-size: 13px; color: var(--muted); letter-spacing: 1px; text-transform: uppercase; }
+.hud-line { font-size: 20px; font-weight: 600; color: #e6edf3; line-height: 1.35; }
+#hint {
+  position: absolute;
+  bottom: 12px;
+  left: 0;
+  right: 0;
+  text-align: center;
+  font-size: 12px;
+  color: var(--dim);
+  pointer-events: none;
+}
+
+/* ---------- Overlays (pause / game over) ---------- */
+.overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(13, 17, 23, 0.78);
+  backdrop-filter: blur(2px);
+}
+.overlay.hidden { display: none; }
+.panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 260px;
+  padding: 28px 32px;
+  text-align: center;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+.panel h2 { margin: 0 0 6px; font-size: 22px; color: #e6edf3; }
+.panel p { margin: 2px; font-size: 15px; color: var(--fg); }
+.btn {
+  padding: 12px 24px;
+  font: inherit;
+  font-size: 15px;
+  font-weight: 600;
+  color: #0d1117;
+  background: var(--accent);
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.15s, transform 0.05s;
+}
+.btn:hover { background: var(--accent-hi); }
+.btn:active { transform: translateY(1px); }
+.btn-ghost {
+  color: var(--fg);
+  background: transparent;
+  border: 1px solid var(--line);
+}
+.btn-ghost:hover { background: #1b2230; border-color: var(--accent); }

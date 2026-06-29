@@ -90,4 +90,5 @@ Left intentionally open for hands-on playtesting rather than decided in the abst
 ## Related files
 - [`game_concept_v1_ball-spin-throw.md`](game_concept_v1_ball-spin-throw.md): the original (superseded) ball + orbit-spin design, kept verbatim for history.
 - `game_prototype_prompt.md`: the literal build prompt for the first playable prototype (describes the original v1 mechanic).
-- `../index.html`: the live prototype implementing this current design.
+- `../ARCHITECTURE.md`: how the game was refactored into a **sandbox core + game modes**. The flick mechanic described here now lives in `../src/core/physics.ts` and is shared by every mode; "Free Play" (`../src/modes/freePlay.ts`) is this design running as one mode among many.
+- `../BACKLOG.md`: the roadmap (more modes, local then online multiplayer, the "true engine" direction).
