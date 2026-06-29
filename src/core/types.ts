@@ -92,6 +92,13 @@ export interface PlayerBoard {
   inputId: string;
   /** Set each frame by physics from this board's input — was catch/flick held? */
   action: boolean;
+  /**
+   * Movement-speed scale (1 = normal). Lets a mode buff/debuff a single board
+   * without touching the global PLAYER_SPEED feel — e.g. a "slow" debuff sets
+   * this below 1 for a few seconds. The core only multiplies; meaning is the
+   * mode's business.
+   */
+  speedMul: number;
 }
 
 export interface Ball {
